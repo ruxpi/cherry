@@ -1,88 +1,128 @@
-import argparse
+import cv2
 import datetime
 import imutils
+import sys
 import time
-import cv2
+import pdb
 
-
-# Construct Argument parser and parse arguements
-ap = argparse.ArgumentParser()
-ap.add_argument("-v", "--video", help="path to the video file")
-ap.add_argument("-a", "--min-area", type=int, default =500, help="minimum area size")
-args = vars(ap.parse_args())
-
-# if the video arguement is None, then we are reading from webcam
-if args.get("video", None) is None:
-	camera = cv2.VideoCapture(0)
-	time.sleep(0.25)
-
-# otherwise, we are reading from a video file
-else:
-	camera = cv2.VideoCapture(args["video"])
-
-# initialize the first frame of video stream
-firstFrame = None
-
-# loop over the frames of the video
-while True:
-	# grab the current frame and initialize the occupied/unoccupied
-	# text
-	(grabbed, frame) = camera.read()
-	text = "Unoccupied"
- 
-	# if the frame could not be grabbed, then we have reached the end
-	# of the video
-	if not grabbed:
-		break
- 
-	# resize the frame, convert it to grayscale, and blur it
+def image_process(frame):
 	frame = imutils.resize(frame, width=500)
 	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 	gray = cv2.GaussianBlur(gray, (21, 21), 0)
- 
-	# if the first frame is None, initialize it
-	if firstFrame is None:
-		firstFrame = gray
-		continue
-	# compute the absolute difference between the current frame and
-	# first frame
-	frameDelta = cv2.absdiff(firstFrame, gray)
-	thresh = cv2.threshold(frameDelta, 25, 255, cv2.THRESH_BINARY)[1]
- 
-	# dilate the thresholded image to fill in holes, then find contours
-	# on thresholded image
-	thresh = cv2.dilate(thresh, None, iterations=2)
-	(_, cnts, _) = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
-		cv2.CHAIN_APPROX_SIMPLE)
- 
-	# loop over the contours
-	for c in cnts:
-		# if the contour is too small, ignore it
-		if cv2.contourArea(c) < args["min_area"]:
-			continue
- 
-		# compute the bounding box for the contour, draw it on the frame,
-		# and update the text
-		(x, y, w, h) = cv2.boundingRect(c)
-		cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-		text = "Occupied"
+	return frame, gray
 
-	# draw the text and timestamp on the frame
-	cv2.putText(frame, "Room Status: {}".format(text), (10, 20),
-		cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-	cv2.putText(frame, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"),
-		(10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
- 
-	# show the frame and record if the user presses a key
-	cv2.imshow("Security Feed", frame)
-	cv2.imshow("Thresh", thresh)
-	cv2.imshow("Frame Delta", frameDelta)
-	key = cv2.waitKey(1) & 0xFF
- 
-	# if the `q` key is pressed, break from the lop
-	if key == ord("q"):
-		break
- 
-# cleanup the camera and close any open windows
-camera.release()
-cv2.destroyAllWindows()
+def get_bg():
+	camera = cv2.VideoCapture(0)
+	(grabbed, frame) = camera.read()
+
+	if not grabbed:
+		print("no camera")
+		camera.release()
+		return 0 
+	(_, gray) = image_process(frame)
+
+	return gray
+
+def record_video():
+	start_time = datetime.datetime.now()
+
+	cap = cv2.VideoCapture(0)
+
+	# Define the codec and create VideoWriter object
+	fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+	out = cv2.VideoWriter('{}.avi'.format(time.time()),fourcc, 20.0, (640,480))
+
+	while(cap.isOpened() and (datetime.datetime.now() - start_time) < datetime.timedelta(seconds=10)):
+	    ret, frame = cap.read()
+	    if ret==True:
+	        #frame = cv2.flip(frame,0)
+
+	        # write the flipped frame
+	        out.write(frame)
+
+	        cv2.imshow('frame',frame)
+	        if cv2.waitKey(1) & 0xFF == ord('q'):
+	            break
+	    else:
+	        break
+
+	# Release everything if job is finished
+	cap.release()
+	out.release()
+
+
+def detect_movement(bg_image, rec_bool):
+	last_detect_time = None
+
+	#open connection to webcam
+	camera = cv2.VideoCapture(0)
+	if rec_bool == 1:
+		print("recording start")
+		# pdb.set_trace()
+		#frame_size = bg_image.shape[:2]
+		#fourcc = cv2.VideoWriter_fourcc('8', 'B', 'P', 'S')
+		#pdb.set_trace()
+		#out = cv2.VideoWriter('output.avi', -1, 30.0, frame_size, True)
+
+	while True:
+		# grab first frame, if frame can't be grabbed, exit
+		(grabbed, frame) = camera.read()
+
+		if not grabbed:
+			print('unable to grab camera')
+			break
+
+		#process frame
+		(frame, gray) = image_process(frame) #Potentially problematic tupple issue
+
+		#compute absolute diff between background and current frame
+		frameDelta = cv2.absdiff(bg_image, gray)
+		thresh = cv2.threshold(frameDelta, 25, 255, cv2.THRESH_BINARY)[1]
+
+		# dilate the thresholded image to fill in holes, then find contours
+		thresh = cv2.dilate(thresh, None, iterations=2)
+		(_, cnts, _) = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
+			cv2.CHAIN_APPROX_SIMPLE)
+
+		# loop over the contours
+		movement = 0
+		for c in cnts:
+			# if the contour is too small, ignore it
+			if cv2.contourArea(c) > 500:
+				movement = 1
+
+		if rec_bool == 1:
+
+			if movement == 0 and (datetime.datetime.now() - last_detect_time > datetime.timedelta(seconds = 1)):
+				#out.release()
+				camera.release()
+				return 0
+
+			if movement == 1:
+				last_detect_time = datetime.datetime.now()
+
+			print("recording video")
+			#pdb.set_trace()
+			camera.release()
+			record_video()
+			camera = cv2.VideoCapture(0)
+			#print(frame)
+
+		else:
+			if movement == 1:
+				camera.release()
+				detect_movement(bg_image, 1)
+				camera = cv2.VideoCapture(0)
+			else:
+				print("no movement detected")
+
+
+bg_image = get_bg()
+detect_movement(bg_image, 0)
+
+
+
+
+
+
+
